@@ -1,0 +1,162 @@
+name: NanoPi R2S ImmortalWrt
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+jobs:
+  ImmortalWrt-18_06:
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+    - name: Init Building Dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        docker rmi $(docker images -q)
+        sudo -E apt-get remove -y --purge azure-cli ghc zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* mssql-tools msodbcsql17 android*
+        sudo -E apt-get update -y
+        sudo -E apt-get full-upgrade -y
+        sudo -E apt-get install -y build-essential asciidoc binutils bzip2 coreutils gawk gettext git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-8 gcc++-8 gcc-8-multilib g++-8-multilib p7zip p7zip-full msmtp libssl-dev texinfo libreadline-dev libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint ccache curl wget vim nano python python3 python-pip python3-pip python3-setuptools python-ply python3-ply haveged lrzsz device-tree-compiler scons antlr3 gperf ecj fastjar re2c xz-utils tar zip
+        sudo -EH pip3 install -U pyrogram tgCrypto
+        for i in $(ls /usr/bin/*-8); do sudo -E ln -sf $i ${i%%-8*}; done
+        sudo -E ln -sf /usr/include/asm-generic /usr/include/asm
+        sudo -E apt-get autoremove -y --purge
+        sudo -E apt-get clean -y
+        sudo -E swapoff -a
+        sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /swapfile
+    - name: Clone Source
+      run: |
+        cd "/home/runner"
+        git clone --branch "openwrt-18.06-k5.4" --single-branch "https://github.com/immortalwrt/immortalwrt" "immortalwrt"
+        sudo chown -R runner:runner "immortalwrt"
+        cd "/home/runner/immortalwrt"
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        patch -p1 < "${GITHUB_WORKSPACE}/patches/1806-modify_for_r2s.patch"
+    - name: Build ImmortalWrt-18.06
+      run: |
+        cd "/home/runner/immortalwrt"
+        cp -f "${GITHUB_WORKSPACE}/configs/1806-config.seed" ".config"
+        make defconfig
+        make -j$[$(nproc)+1]
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz" "../immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz" "../immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/sha256sums" "../immortalwrt-18.06-sha256sums"
+    - name: Rebuild ImmortalWrt-18.06 to Collect Error Log
+      if: failure()
+      run: |
+        cd "/home/runner/immortalwrt"
+        make -j1 V=s
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz" "../immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz" "../immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/sha256sums" "../immortalwrt-18.06-sha256sums"
+    - name: Upload ImmortalWrt-18.06 SHA256SUM Hash
+      uses: actions/upload-artifact@v2
+      with:
+        name: immortalwrt-18.06-sha256sums
+        path: /home/runner/immortalwrt-18.06-sha256sums
+    - name: Upload ImmortalWrt-18.06 EXT4 Firmware
+      uses: actions/upload-artifact@v2
+      with:
+        name: immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz
+        path: /home/runner/immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz
+    - name: Upload ImmortalWrt-18.06 SquashFS Firmware
+      uses: actions/upload-artifact@v2
+      with:
+        name: immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz
+        path: /home/runner/immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz
+    - name: Upload ImmortalWrt-18.06 Firmwares to Cloud
+      timeout-minutes: 30
+      run: |
+        cd "/home/runner"
+        zip -j "immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-sysupgrade.zip" "immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz" "immortalwrt-18.06-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz" "immortalwrt-18.06-sha256sums"
+        ${GITHUB_WORKSPACE}/scripts/upload_firmware.py  --device-name "FriendlyARM NanoPi R2S" --device-file "rockchip-armv8-friendlyarm_nanopi-r2s" --immortalwrt-version "18.06" --kernel-version "5.4" --api-id "${{ secrets.TELEGRAM_API_ID }}" --api-hash "${{ secrets.TELEGRAM_API_HASH }}" --bot-token "${{ secrets.TELEGRAM_BOT_TOKEN }}" || exit 0
+  ImmortalWrt-Snapshot:
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+    - name: Init Building Dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        docker rmi $(docker images -q)
+        sudo -E apt-get remove -y --purge azure-cli ghc zulu* hhvm llvm* firefox google* dotnet* powershell mysql* php* mssql-tools msodbcsql17 android*
+        sudo -E apt-get update -y
+        sudo -E apt-get full-upgrade -y
+        sudo -E apt-get install -y build-essential asciidoc binutils bzip2 coreutils gawk gettext git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-8 gcc++-8 gcc-8-multilib g++-8-multilib p7zip p7zip-full msmtp libssl-dev texinfo libreadline-dev libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint ccache curl wget vim nano python python3 python-pip python3-pip python3-setuptools python-ply python3-ply haveged lrzsz device-tree-compiler scons antlr3 gperf ecj fastjar re2c xz-utils tar zip
+        sudo -EH pip3 install -U pyrogram tgCrypto
+        for i in $(ls /usr/bin/*-8); do sudo -E ln -sf $i ${i%%-8*}; done
+        sudo -E ln -sf /usr/include/asm-generic /usr/include/asm
+        sudo -E apt-get autoremove -y --purge
+        sudo -E apt-get clean -y
+        sudo -E swapoff -a
+        sudo -E rm -rf /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc /swapfile
+    - name: Clone Source
+      run: |
+        cd "/home/runner"
+        git clone --branch "master" --single-branch "https://github.com/immortalwrt/immortalwrt" "immortalwrt"
+        sudo chown -R runner:runner "immortalwrt"
+        cd /home/runner/immortalwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        patch -p1 < "${GITHUB_WORKSPACE}/patches/snapshot-modify_for_r2s.patch"
+    - name: Build ImmortalWrt-Snapshot
+      run: |
+        cd /home/runner/immortalwrt
+        cp -f "${GITHUB_WORKSPACE}/configs/snapshot-config.seed" ".config"
+        make defconfig
+        make -j$[$(nproc)+1]
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz" "../immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz" "../immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/sha256sums" "../immortalwrt-snapshot-sha256sums"
+    - name: Rebuild ImmortalWrt-Snapshot to Collect Error Log
+      if: failure()
+      run: |
+        cd /home/runner/immortalwrt
+        make -j1 V=s
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz" "../immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/immortalwrt-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz" "../immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz"
+        mv -f "bin/targets/rockchip/armv8/sha256sums" "../immortalwrt-snapshot-sha256sums"
+    - name: Upload ImmortalWrt-Snapshot SHA256SUM Hash
+      uses: actions/upload-artifact@v2
+      with:
+        name: immortalwrt-snapshot-sha256sums
+        path: /home/runner/immortalwrt-snapshot-sha256sums
+    - name: Upload ImmortalWrt-Snapshot EXT4 Firmware
+      uses: actions/upload-artifact@v2
+      with:
+        name: immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz
+        path: /home/runner/immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz
+    - name: Upload ImmortalWrt-Snapshot SquashFS Firmware
+      uses: actions/upload-artifact@v2
+      with:
+        name: immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz
+        path: /home/runner/immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz
+    - name: Upload ImmortalWrt-Snapshot Firmwares to Cloud
+      timeout-minutes: 30
+      run: |
+        cd "/home/runner"
+        zip -j "immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-sysupgrade.zip" "immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-ext4-sysupgrade.img.gz" "immortalwrt-snapshot-rockchip-armv8-friendlyarm_nanopi-r2s-squashfs-sysupgrade.img.gz" "immortalwrt-snapshot-sha256sums"
+        ${GITHUB_WORKSPACE}/scripts/upload_firmware.py  --device-name "FriendlyARM NanoPi R2S" --device-file "rockchip-armv8-friendlyarm_nanopi-r2s" --immortalwrt-version "snapshot" --kernel-version "5.4" --api-id "${{ secrets.TELEGRAM_API_ID }}" --api-hash "${{ secrets.TELEGRAM_API_HASH }}" --bot-token "${{ secrets.TELEGRAM_BOT_TOKEN }}" || exit 0
+  Cleanup-Old-Artifacts:
+    needs: [ImmortalWrt-18_06,ImmortalWrt-Snapshot]
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Cleanup Old Action Artifacts
+      uses: kolpav/purge-artifacts-action@v1
+      with:
+        token: ${{ github.token }}
+        expire-in: 7d
+  Cleanup-Workflow-Runs:
+    needs: Cleanup-Old-Artifacts
+    runs-on: ubuntu-18.04
+    steps:
+      - name: Cleanup Workflow Runs
+        uses: GitRML/delete-workflow-runs@v1.2.1
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          retain_days: 7
